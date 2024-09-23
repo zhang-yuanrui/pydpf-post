@@ -19,6 +19,8 @@ from ansys.dpf.core.property_fields_container import (
 )
 import ansys.dpf.gate.errors
 import numpy as np
+from vtk.util.numpy_support import vtk_to_numpy
+import vtk
 
 from ansys.dpf.post import locations, shell_layers
 from ansys.dpf.post.index import (
@@ -32,6 +34,10 @@ from ansys.dpf.post.index import (
     SetIndex,
     ref_labels,
 )
+
+import sys
+sys.path.insert(0, r'C:\Users\yuzhang\pyvista\dev\pyvista\ext')
+import deep_pixel_images as dpi
 
 default_display_max_columns = 6
 default_display_max_rows = 6
@@ -851,6 +857,8 @@ class DataFrame:
             ).eval()
         plotter = DpfPlotter(**kwargs)
         plotter.add_field(field=field_to_plot, **kwargs)
+        
+        generate_tiff(plotter)
 
         return plotter.show_figure(
             title=kwargs.pop("title", str(label_space)), **kwargs
@@ -1151,3 +1159,97 @@ class DataFrame:
             columns=columns,
         )
         self._last_minmax["axis"] = axis
+
+def generate_tiff(plotter: DpfPlotter):
+    rgb_buffer = retrieve_rgb_value(plotter)
+    pick_buffer = retrieve_pick_data(plotter)
+    # var_buffer = retrieve_var_point_data(plotter)
+    # print(var_buffer)
+    # print(f"rgb: {rgb_buffer}")
+
+
+def make_hardcode_pick_data(mapper):
+    poly_data = mapper.GetInput()
+    point_data = poly_data.GetPointData()
+    num_points = poly_data.GetNumberOfPoints()
+    arr = vtk.vtkFloatArray()
+    arr.SetName("Pick Data")
+    arr.SetNumberOfComponents(1)
+    arr.SetNumberOfTuples(num_points)
+    for i in range(num_points):
+        arr.SetValue(i, 3456)
+        
+    point_data.AddArray(arr)
+
+def retrieve_pick_data(plotter: DpfPlotter):
+    renderer = plotter._internal_plotter._plotter.renderer
+    render_window = plotter._internal_plotter._plotter.render_window
+    print("!!!!!!!!!!!")
+    print(type(renderer))
+    print(type(render_window))
+    actors = renderer.actors
+    for actor in actors.values():
+        mapper = actor.GetMapper()
+        if mapper is not None:
+            make_hardcode_pick_data(mapper)
+            break
+    
+    pick_buffer = dpi.render_pick_data(renderer, render_window)
+    return pick_buffer
+    
+    
+# Return a dict, key: actor (3D object name); value: a dict whose key is the array name (var name) and value is the data
+def retrieve_var_point_data(plotter: DpfPlotter):
+    renderer = plotter._internal_plotter._plotter.renderer
+    render_window = plotter._internal_plotter._plotter.render_window
+    # print("!!!!!!!!!!!")
+    # print(type(renderer))
+    # print(type(render_window))
+    actors = renderer.actors
+    var_data = {}
+    for name, actor in actors.items():
+        mapper = actor.GetMapper()
+        if mapper is None:
+            continue
+        var_data[name] = {}
+        poly_data = mapper.GetInput()
+        point_data = poly_data.GetPointData()
+
+        num_arrays = point_data.GetNumberOfArrays()
+
+        for i in range(num_arrays):
+            var_name = point_data.GetArrayName(i)
+            var_array = point_data.GetArray(var_name)
+            var_data[name][var_name] = var_array
+    
+            var_array.SetName("Displacement")
+            return dpi.render_var_data(renderer, render_window, "Displacement")
+
+def retrieve_var_cell_data(plotter: DpfPlotter):
+    renderer = plotter._internal_plotter._plotter.renderer
+    actors = renderer.actors
+    var_data = {}
+    for name, actor in actors.items():
+        mapper = actor.GetMapper()
+        if mapper is None:
+            continue
+        var_data[name] = {}
+        poly_data = mapper.GetInput()
+        cell_data = poly_data.GetCellData()
+
+        num_arrays = cell_data.GetNumberOfArrays()
+
+        for i in range(num_arrays):
+            var_name = cell_data.GetArrayName(i)
+            var_array = cell_data.GetArray(var_name)
+            var_data[name][var_name] = vtk_to_numpy(var_array)
+    
+    return var_data
+
+def retrieve_rgb_value(plotter: DpfPlotter):
+    render_window = plotter._internal_plotter._plotter.render_window
+    return dpi.get_rgb_value(render_window)
+
+if __name__ == "__main__":
+    plotter = DpfPlotter()
+    retrieve_var_point_data(plotter)
